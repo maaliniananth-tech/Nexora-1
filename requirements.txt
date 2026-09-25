@@ -1,8 +1,10 @@
 streamlit
-Pillow
-numpy
 pandas
+numpy
+Pillow
 requests
-torch
-transformers
+torch==2.5.1
+torchvision==0.20.1
+transformers==4.46.3
+
 
