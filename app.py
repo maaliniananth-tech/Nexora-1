@@ -3,27 +3,60 @@ from PIL import Image
 import numpy as np
 import pandas as pd
 import requests
+import torch
+from transformers import AutoImageProcessor, AutoModelForImageClassification
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="AgriBridge", page_icon="🌾", layout="wide")
 
 # ---------------------------------------------------------------------------
-# Static data
+# Disease model config
 # ---------------------------------------------------------------------------
-DISEASES = [
-    {"name": "Healthy", "severity": "ok",
-     "tip": "No action needed — maintain regular watering and monitor weekly."},
-    {"name": "Leaf Blight", "severity": "bad",
-     "tip": "Remove infected leaves, apply copper-based fungicide, improve field drainage."},
-    {"name": "Powdery Mildew", "severity": "warn",
-     "tip": "Increase airflow between plants, apply sulfur spray, avoid overhead watering."},
-    {"name": "Bacterial Leaf Spot", "severity": "bad",
-     "tip": "Use disease-free seed, rotate crops, apply copper bactericide early morning."},
-    {"name": "Leaf Rust", "severity": "warn",
-     "tip": "Apply triazole fungicide, remove volunteer plants, choose resistant varieties next season."},
-    {"name": "Nutrient Deficiency (Nitrogen)", "severity": "warn",
-     "tip": "Apply nitrogen-rich fertilizer or compost; soil test recommended."},
+MODEL_NAME = "linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification"
+# 38-class PlantVillage label set this checkpoint was fine-tuned on
+KEYWORD_TIPS = [
+    ("healthy", "ok", "No action needed — maintain regular watering and monitor weekly."),
+    ("blight", "bad", "Remove and destroy infected leaves, apply a copper-based fungicide, improve field drainage and spacing for airflow."),
+    ("rust", "warn", "Apply a triazole fungicide, remove volunteer/nearby host plants, and favor rust-resistant varieties next season."),
+    ("mildew", "warn", "Increase airflow between plants, apply a sulfur or potassium-bicarbonate spray, avoid overhead watering."),
+    ("scab", "warn", "Prune for airflow, rake and destroy fallen leaves, apply fungicide at bud break next season."),
+    ("rot", "bad", "Remove and destroy affected tissue, avoid overhead irrigation, improve drainage, apply appropriate fungicide."),
+    ("spot", "warn", "Remove affected leaves, avoid overhead watering, apply copper-based bactericide/fungicide, rotate crops."),
+    ("mite", "warn", "Introduce predatory mites or apply insecticidal soap / miticide; avoid drought stress which favors mites."),
+    ("mold", "warn", "Improve ventilation and reduce humidity around plants, remove affected foliage, apply fungicide if severe."),
+    ("mosaic", "bad", "No cure — remove and destroy infected plants, control aphid vectors, use certified virus-free seed/planting material."),
+    ("curl", "bad", "Control whitefly vectors (the usual carrier), remove infected plants, use resistant varieties and reflective mulch."),
+    ("greening", "bad", "No cure — remove infected trees, control psyllid insect vectors aggressively, use certified disease-free nursery stock."),
+    ("bacterial", "bad", "Use disease-free seed, apply copper-based bactericide, avoid working in fields when leaves are wet."),
 ]
+GENERIC_TIP = ("warn", "Isolate the affected plant, monitor closely, and consult a local agricultural extension office for confirmation.")
+
+
+@st.cache_resource(show_spinner="Loading plant disease model (first run only)...")
+def load_model():
+    processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
+    model = AutoModelForImageClassification.from_pretrained(MODEL_NAME)
+    model.eval()
+    return processor, model
+
+
+def tip_for_label(raw_label: str):
+    label = raw_label.lower()
+    for kw, sev, tip in KEYWORD_TIPS:
+        if kw in label:
+            return sev, tip
+    return GENERIC_TIP
+
+
+def pretty_label(raw_label: str) -> str:
+    # PlantVillage labels look like "Tomato___Late_blight" -> "Tomato — Late blight"
+    parts = raw_label.replace("___", "|").replace("_", " ").split("|")
+    if len(parts) == 2:
+        crop, disease = parts
+        return f"{crop.strip()} — {disease.strip()}"
+    return raw_label.replace("_", " ")
+
+
 SEVERITY_COLOR = {"ok": "green", "warn": "orange", "bad": "red"}
 STEPS = ["Order Placed", "Farmer Confirmed", "In Transit", "Delivered"]
 
@@ -68,24 +101,30 @@ init_state()
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def analyze_leaf(image: Image.Image):
-    img = image.convert("RGB").resize((80, 80))
-    arr = np.array(img).astype(float)
-    r, g, b = arr[:, :, 0].mean(), arr[:, :, 1].mean(), arr[:, :, 2].mean()
-    greenness = g - (r + b) / 2
-    brown_yellow = (r + g) / 2 - b
-    if greenness > 25:
-        idx, confidence = 0, 88
-    elif brown_yellow > 40 and r > g:
-        idx, confidence = 1, 79
-    elif g > r and g > b:
-        idx, confidence = 2, 74
-    elif r > 100 and g < 90:
-        idx, confidence = 3, 71
-    else:
-        idx, confidence = 4, 68
-    d = DISEASES[idx]
-    return {"name": d["name"], "severity": d["severity"], "tip": d["tip"], "confidence": confidence}
+def analyze_leaf(image: Image.Image, top_k: int = 3):
+    processor, model = load_model()
+    img = image.convert("RGB")
+    inputs = processor(images=img, return_tensors="pt")
+    with torch.no_grad():
+        logits = model(**inputs).logits
+        probs = torch.nn.functional.softmax(logits, dim=-1)[0]
+
+    top_probs, top_idx = torch.topk(probs, k=min(top_k, probs.shape[0]))
+    id2label = model.config.id2label
+    results = [
+        {"label": id2label[i.item()], "score": float(p)}
+        for p, i in zip(top_probs, top_idx)
+    ]
+
+    best = results[0]
+    severity, tip = tip_for_label(best["label"])
+    return {
+        "name": pretty_label(best["label"]),
+        "severity": severity,
+        "tip": tip,
+        "confidence": round(best["score"] * 100, 1),
+        "top_k": [{"name": pretty_label(r["label"]), "score": round(r["score"] * 100, 1)} for r in results],
+    }
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -175,11 +214,16 @@ with tab_scan:
         with col1:
             st.image(image, use_container_width=True)
         with col2:
-            result = analyze_leaf(image)
+            with st.spinner("Running inference..."):
+                result = analyze_leaf(image)
             st.session_state.scans.append(result)
             st.markdown(f":{SEVERITY_COLOR[result['severity']]}[**{result['name']}**]")
             st.write(result["tip"])
-            st.caption(f"Confidence: {result['confidence']}% · demo heuristic based on leaf color analysis")
+            st.caption(f"Confidence: {result['confidence']}%")
+            with st.expander("See top-3 model predictions"):
+                for r in result["top_k"]:
+                    st.write(f"{r['name']} — {r['score']}%")
+    st.caption("Model: MobileNetV2 fine-tuned on the PlantVillage dataset (38 classes, ~95% eval accuracy). Not a substitute for expert diagnosis.")
 
     st.subheader("Scan history")
     if st.session_state.scans:
