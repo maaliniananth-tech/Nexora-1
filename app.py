@@ -3,6 +3,7 @@ from PIL import Image
 import numpy as np
 import pandas as pd
 import requests
+import hashlib
 import torch
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 from datetime import datetime, timedelta
@@ -109,6 +110,14 @@ T = {
         "community_title": "Farmer community board", "your_name": "Your name",
         "share_placeholder": "Share a question, tip or update", "post_btn": "Post", "posted": "Posted!",
         "footer": "Built for the Agri Bridge hackathon · prototype demo",
+        "login_title": "Welcome to AgriBridge", "login_subtitle": "Sign in to continue",
+        "login_tab": "Log in", "signup_tab": "Sign up", "username": "Username", "password": "Password",
+        "confirm_password": "Confirm password", "role": "I am a", "role_farmer": "Farmer", "role_buyer": "Buyer",
+        "login_btn": "Log in", "signup_btn": "Create account", "guest_btn": "Continue as Guest",
+        "invalid_creds": "Incorrect username or password.", "fill_all_fields": "Please fill in all fields.",
+        "password_mismatch": "Passwords don't match.", "username_taken": "That username is already taken.",
+        "signup_success": "Account created — you can log in now.", "logout_btn": "Log out",
+        "welcome_user": "Welcome, {name}", "guest_name": "Guest",
         "language": "Language / भाषा / மொழி",
     },
     "hi": {
@@ -150,6 +159,14 @@ T = {
         "community_title": "किसान समुदाय बोर्ड", "your_name": "आपका नाम",
         "share_placeholder": "एक प्रश्न, सुझाव या अपडेट साझा करें", "post_btn": "पोस्ट करें", "posted": "पोस्ट हो गया!",
         "footer": "एग्री ब्रिज हैकथॉन के लिए बनाया गया · प्रोटोटाइप डेमो",
+        "login_title": "AgriBridge में आपका स्वागत है", "login_subtitle": "जारी रखने के लिए लॉग इन करें",
+        "login_tab": "लॉग इन", "signup_tab": "साइन अप", "username": "उपयोगकर्ता नाम", "password": "पासवर्ड",
+        "confirm_password": "पासवर्ड की पुष्टि करें", "role": "मैं हूं", "role_farmer": "किसान", "role_buyer": "खरीदार",
+        "login_btn": "लॉग इन करें", "signup_btn": "खाता बनाएं", "guest_btn": "अतिथि के रूप में जारी रखें",
+        "invalid_creds": "गलत उपयोगकर्ता नाम या पासवर्ड।", "fill_all_fields": "कृपया सभी फ़ील्ड भरें।",
+        "password_mismatch": "पासवर्ड मेल नहीं खाते।", "username_taken": "यह उपयोगकर्ता नाम पहले से लिया गया है।",
+        "signup_success": "खाता बन गया — अब आप लॉग इन कर सकते हैं।", "logout_btn": "लॉग आउट",
+        "welcome_user": "नमस्ते, {name}", "guest_name": "अतिथि",
         "language": "Language / भाषा / மொழி",
     },
     "ta": {
@@ -191,6 +208,14 @@ T = {
         "community_title": "விவசாயி சமூக பலகை", "your_name": "உங்கள் பெயர்",
         "share_placeholder": "ஒரு கேள்வி, குறிப்பு அல்லது புதுப்பிப்பை பகிரவும்", "post_btn": "இடுகையிடு", "posted": "இடுகையிடப்பட்டது!",
         "footer": "அக்ரி பிரிட்ஜ் ஹேக்கத்தானுக்காக உருவாக்கப்பட்டது · முன்மாதிரி டெமோ",
+        "login_title": "AgriBridge-க்கு வரவேற்கிறோம்", "login_subtitle": "தொடர உள்நுழையவும்",
+        "login_tab": "உள்நுழைய", "signup_tab": "பதிவு செய்ய", "username": "பயனர்பெயர்", "password": "கடவுச்சொல்",
+        "confirm_password": "கடவுச்சொல்லை உறுதிப்படுத்தவும்", "role": "நான் ஒரு", "role_farmer": "விவசாயி", "role_buyer": "வாங்குபவர்",
+        "login_btn": "உள்நுழைய", "signup_btn": "கணக்கை உருவாக்கு", "guest_btn": "விருந்தினராக தொடரவும்",
+        "invalid_creds": "தவறான பயனர்பெயர் அல்லது கடவுச்சொல்.", "fill_all_fields": "தயவுசெய்து அனைத்து புலங்களையும் நிரப்பவும்.",
+        "password_mismatch": "கடவுச்சொற்கள் பொருந்தவில்லை.", "username_taken": "இந்த பயனர்பெயர் ஏற்கனவே உள்ளது.",
+        "signup_success": "கணக்கு உருவாக்கப்பட்டது — இப்போது உள்நுழையலாம்.", "logout_btn": "வெளியேறு",
+        "welcome_user": "வணக்கம், {name}", "guest_name": "விருந்தினர்",
         "language": "Language / भाषा / மொழி",
     },
 }
@@ -360,12 +385,84 @@ def init_state():
             {"author": "S. Patel", "text": "Anyone dealing with whitefly on cotton this season? Neem oil worked for me.", "time": datetime.now() - timedelta(hours=5)},
             {"author": "M. Reddy", "text": "Onion prices looking good in Nashik mandi this week — ₹22-24/kg.", "time": datetime.now() - timedelta(hours=2)},
         ],
+        "authenticated": False,
+        "current_user": None,
+        "current_role": None,
+        # Demo accounts, password = "demo123" for both (hashed below). Real deployments
+        # should replace this with a proper database + password hashing library.
+        "users": {
+            "farmer1": {"password": hashlib.sha256("demo123".encode()).hexdigest(), "role": "role_farmer"},
+            "buyer1": {"password": hashlib.sha256("demo123".encode()).hexdigest(), "role": "role_buyer"},
+        },
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
 init_state()
+
+
+def hash_password(pw: str) -> str:
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+
+def login_page():
+    lang = st.session_state.lang
+    lc1, lc2, lc3 = st.columns([1, 2, 1])
+    with lc2:
+        st.markdown(
+            f"<div class='agri-banner' style='text-align:center;'>"
+            f"<h1>🌾 {t('login_title')}</h1><p>{t('login_subtitle')}</p></div>",
+            unsafe_allow_html=True,
+        )
+        chosen = st.selectbox(t("language"), list(LANGS.keys()),
+                               index=list(LANGS.values()).index(st.session_state.lang), key="login_lang")
+        st.session_state.lang = LANGS[chosen]
+
+        tab_login, tab_signup = st.tabs([t("login_tab"), t("signup_tab")])
+
+        with tab_login:
+            with st.form("login_form"):
+                u = st.text_input(t("username"), key="login_user")
+                p = st.text_input(t("password"), type="password", key="login_pass")
+                submitted = st.form_submit_button(t("login_btn"), type="primary", use_container_width=True)
+                if submitted:
+                    if not u or not p:
+                        st.error(t("fill_all_fields"))
+                    else:
+                        users = st.session_state.users
+                        if u in users and users[u]["password"] == hash_password(p):
+                            st.session_state.authenticated = True
+                            st.session_state.current_user = u
+                            st.session_state.current_role = users[u]["role"]
+                            st.rerun()
+                        else:
+                            st.error(t("invalid_creds"))
+            st.caption("Demo accounts: **farmer1** / **buyer1**, password **demo123**")
+            if st.button(t("guest_btn"), use_container_width=True):
+                st.session_state.authenticated = True
+                st.session_state.current_user = t("guest_name")
+                st.session_state.current_role = None
+                st.rerun()
+
+        with tab_signup:
+            with st.form("signup_form"):
+                su = st.text_input(t("username"), key="signup_user")
+                sp = st.text_input(t("password"), type="password", key="signup_pass")
+                scp = st.text_input(t("confirm_password"), type="password", key="signup_confirm")
+                srole = st.radio(t("role"), ["role_farmer", "role_buyer"],
+                                  format_func=lambda r: t(r), horizontal=True)
+                signed_up = st.form_submit_button(t("signup_btn"), type="primary", use_container_width=True)
+                if signed_up:
+                    if not su or not sp or not scp:
+                        st.error(t("fill_all_fields"))
+                    elif sp != scp:
+                        st.error(t("password_mismatch"))
+                    elif su in st.session_state.users:
+                        st.error(t("username_taken"))
+                    else:
+                        st.session_state.users[su] = {"password": hash_password(sp), "role": srole}
+                        st.success(t("signup_success"))
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -433,9 +530,16 @@ def emi_calculator(principal, annual_rate, months):
 
 
 # ---------------------------------------------------------------------------
-# Header + language selector
+# Auth gate
 # ---------------------------------------------------------------------------
-hc1, hc2 = st.columns([4, 1])
+if not st.session_state.authenticated:
+    login_page()
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# Header + language selector + logout
+# ---------------------------------------------------------------------------
+hc1, hc2, hc3 = st.columns([4, 1, 1])
 with hc1:
     st.markdown(
         f"<div class='agri-banner'><h1>🌾 AgriBridge</h1><p>{t('subtitle')}</p></div>",
@@ -445,6 +549,14 @@ with hc2:
     chosen = st.selectbox(t("language"), list(LANGS.keys()),
                            index=list(LANGS.values()).index(st.session_state.lang))
     st.session_state.lang = LANGS[chosen]
+with hc3:
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    st.caption(t("welcome_user", name=st.session_state.current_user))
+    if st.button(t("logout_btn"), use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.current_user = None
+        st.session_state.current_role = None
+        st.rerun()
 
 tabs = st.tabs([
     t("tab_dash"), t("tab_scan"), t("tab_market"), t("tab_logistics"),
