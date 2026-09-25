@@ -333,7 +333,7 @@ GENERIC_TIP = {
 
 @st.cache_resource(show_spinner="Loading plant disease model (first run only)...")
 def load_model():
-    processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
+    processor = AutoImageProcessor.from_pretrained(MODEL_NAME, use_fast=False)
     model = AutoModelForImageClassification.from_pretrained(MODEL_NAME)
     model.eval()
     return processor, model
@@ -342,7 +342,7 @@ def load_model():
 @st.cache_resource(show_spinner="Loading expanded disease model (first run only)...")
 def load_secondary_model():
     try:
-        processor = AutoImageProcessor.from_pretrained(SECONDARY_MODEL_NAME)
+        processor = AutoImageProcessor.from_pretrained(SECONDARY_MODEL_NAME, use_fast=False)
         model = AutoModelForImageClassification.from_pretrained(SECONDARY_MODEL_NAME)
         model.eval()
         return processor, model
@@ -501,7 +501,15 @@ def _predict_with_model(image, processor, model, top_k=3):
 
 def analyze_leaf(image: Image.Image, top_k: int = 3):
     # Keep the original PlantVillage model as the primary classifier.
-    primary_processor, primary_model = load_model()
+    try:
+        primary_processor, primary_model = load_model()
+    except Exception as exc:
+        raise RuntimeError(
+            "The disease model could not be loaded. "
+            "Use Python 3.12 and the pinned requirements.txt supplied with this app. "
+            f"Technical detail: {type(exc).__name__}: {exc}"
+        ) from exc
+
     primary_results = _predict_with_model(image, primary_processor, primary_model, top_k)
 
     # Use the secondary PlantDoc classifier when available. This does not remove
