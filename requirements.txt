@@ -3,3 +3,5 @@ Pillow
 numpy
 pandas
 requests
+torch
+transformers
