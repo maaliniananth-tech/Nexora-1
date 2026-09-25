@@ -273,6 +273,10 @@ def tr_crop(name):
 # Disease model config
 # ---------------------------------------------------------------------------
 MODEL_NAME = "linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification"
+# Added secondary real-field disease model. The original model remains the primary model.
+# This expands coverage while keeping the existing scanner, history, tips and Top-3 output.
+SECONDARY_MODEL_NAME = "asafe51/plantdoc-disease-classifier"
+DISEASE_CONFIDENCE_THRESHOLD = 0.55
 KEYWORD_TIPS = {
     "en": [
         ("healthy", "ok", "No action needed — maintain regular watering and monitor weekly."),
@@ -333,6 +337,19 @@ def load_model():
     model = AutoModelForImageClassification.from_pretrained(MODEL_NAME)
     model.eval()
     return processor, model
+
+
+@st.cache_resource(show_spinner="Loading expanded disease model (first run only)...")
+def load_secondary_model():
+    try:
+        processor = AutoImageProcessor.from_pretrained(SECONDARY_MODEL_NAME)
+        model = AutoModelForImageClassification.from_pretrained(SECONDARY_MODEL_NAME)
+        model.eval()
+        return processor, model
+    except Exception:
+        # Keep the original AgriBridge model fully usable if the optional model
+        # is unavailable because of network/cache/environment limitations.
+        return None, None
 
 
 def tip_for_label(raw_label: str):
@@ -467,8 +484,7 @@ def login_page():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def analyze_leaf(image: Image.Image, top_k: int = 3):
-    processor, model = load_model()
+def _predict_with_model(image, processor, model, top_k=3):
     img = image.convert("RGB")
     inputs = processor(images=img, return_tensors="pt")
     with torch.no_grad():
@@ -477,19 +493,69 @@ def analyze_leaf(image: Image.Image, top_k: int = 3):
 
     top_probs, top_idx = torch.topk(probs, k=min(top_k, probs.shape[0]))
     id2label = model.config.id2label
-    results = [
+    return [
         {"label": id2label[i.item()], "score": float(p)}
         for p, i in zip(top_probs, top_idx)
     ]
 
-    best = results[0]
+
+def analyze_leaf(image: Image.Image, top_k: int = 3):
+    # Keep the original PlantVillage model as the primary classifier.
+    primary_processor, primary_model = load_model()
+    primary_results = _predict_with_model(image, primary_processor, primary_model, top_k)
+
+    # Use the secondary PlantDoc classifier when available. This does not remove
+    # or replace the original model; it adds another field-image perspective.
+    secondary_processor, secondary_model = load_secondary_model()
+    secondary_results = []
+    if secondary_processor is not None and secondary_model is not None:
+        try:
+            secondary_results = _predict_with_model(
+                image, secondary_processor, secondary_model, top_k
+            )
+        except Exception:
+            secondary_results = []
+
+    # Prefer the original prediction unless it is low-confidence. If the
+    # secondary model is clearly stronger, use it to broaden practical coverage.
+    best_primary = primary_results[0]
+    best_secondary = secondary_results[0] if secondary_results else None
+    best = best_primary
+    source = "Primary PlantVillage model"
+
+    if (best_secondary is not None and
+            best_primary["score"] < DISEASE_CONFIDENCE_THRESHOLD and
+            best_secondary["score"] > best_primary["score"]):
+        best = best_secondary
+        source = "Secondary PlantDoc model"
+
     severity, tip = tip_for_label(best["label"])
+    confidence = float(best["score"])
+
+    # If neither model is sufficiently confident, do not force a disease name.
+    # The existing scanner/history/features remain unchanged, but the result is
+    # safer for images outside the training classes.
+    low_confidence = confidence < DISEASE_CONFIDENCE_THRESHOLD
+    if low_confidence:
+        severity, tip = GENERIC_TIP[st.session_state.lang]
+        if st.session_state.lang == "en":
+            display_name = "Unknown / Low Confidence — Needs Expert Confirmation"
+        elif st.session_state.lang == "hi":
+            display_name = "अज्ञात / कम विश्वास — विशेषज्ञ की पुष्टि आवश्यक"
+        else:
+            display_name = "தெரியாதது / குறைந்த நம்பிக்கை — நிபுணர் உறுதிப்படுத்தல் தேவை"
+    else:
+        display_name = pretty_label(best["label"])
+
     return {
-        "name": pretty_label(best["label"]),
+        "name": display_name,
         "severity": severity,
         "tip": tip,
-        "confidence": round(best["score"] * 100, 1),
-        "top_k": [{"name": pretty_label(r["label"]), "score": round(r["score"] * 100, 1)} for r in results],
+        "confidence": round(confidence * 100, 1),
+        "top_k": [{"name": pretty_label(r["label"]), "score": round(r["score"] * 100, 1)} for r in primary_results],
+        "model_source": source,
+        "secondary_top_k": [{"name": pretty_label(r["label"]), "score": round(r["score"] * 100, 1)} for r in secondary_results],
+        "low_confidence": low_confidence,
     }
 
 
