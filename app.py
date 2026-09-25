@@ -10,6 +10,61 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="AgriBridge", page_icon="🌾", layout="wide")
 
 # ---------------------------------------------------------------------------
+# Theme / background styling
+# ---------------------------------------------------------------------------
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Outfit:wght@600;700&display=swap');
+
+html, body, [class*="css"] { font-family: 'Manrope', sans-serif; }
+
+/* Page background: soft cream-to-green wash with a faint leaf pattern */
+[data-testid="stAppViewContainer"] {
+    background:
+      radial-gradient(circle at 15% 20%, rgba(39,103,73,0.06) 0, transparent 35%),
+      radial-gradient(circle at 85% 75%, rgba(217,119,6,0.07) 0, transparent 40%),
+      linear-gradient(180deg, #faf7ef 0%, #f3f6ec 100%);
+}
+[data-testid="stHeader"] { background: rgba(0,0,0,0); }
+
+/* Hero banner */
+.agri-banner{
+    background: linear-gradient(120deg, #1b4a34 0%, #276749 55%, #3d7a52 100%);
+    border-radius: 18px;
+    padding: 22px 28px;
+    margin-bottom: 6px;
+    box-shadow: 0 8px 24px rgba(27,74,52,0.25);
+}
+.agri-banner h1{
+    font-family:'Outfit', sans-serif; color:#fff; margin:0; font-size:2rem;
+}
+.agri-banner p{ color:#e6f0e6; margin:4px 0 0; font-size:0.95rem; }
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"]{ gap:4px; }
+.stTabs [data-baseweb="tab"]{
+    background:#ffffffaa; border-radius:10px 10px 0 0; padding:8px 14px; font-weight:600;
+}
+.stTabs [aria-selected="true"]{ background:#276749 !important; color:#fff !important; }
+
+/* Buttons */
+.stButton>button, .stFormSubmitButton>button, .stDownloadButton>button{
+    border-radius:10px; border:1px solid #d9d2bd; font-weight:700;
+}
+.stButton>button[kind="primary"], .stFormSubmitButton>button[kind="primary"]{
+    background:#d97706; border-color:#d97706;
+}
+.stButton>button[kind="primary"]:hover{ background:#b45309; border-color:#b45309; }
+
+/* Metric + bordered containers -> card look */
+div[data-testid="stMetric"], div[data-testid="stVerticalBlockBorderWrapper"]{
+    background:#ffffff; border-radius:14px; padding:6px 10px;
+    box-shadow: 0 2px 10px rgba(27,74,52,0.08); border:1px solid #ece6d6;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
 # i18n — English / Hindi / Tamil
 # ---------------------------------------------------------------------------
 LANGS = {"English": "en", "हिन्दी": "hi", "தமிழ்": "ta"}
@@ -383,8 +438,7 @@ def emi_calculator(principal, annual_rate, months):
 hc1, hc2 = st.columns([4, 1])
 with hc1:
     st.markdown(
-        f"<h1 style='margin-bottom:0;'>🌾 AgriBridge</h1>"
-        f"<p style='color:gray;margin-top:0;'>{t('subtitle')}</p>",
+        f"<div class='agri-banner'><h1>🌾 AgriBridge</h1><p>{t('subtitle')}</p></div>",
         unsafe_allow_html=True,
     )
 with hc2:
